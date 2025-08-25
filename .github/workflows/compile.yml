@@ -96,6 +96,10 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://github.com/nalexandru/api-ms-win-core-path-HACK/releases/download/0.3.1/api-ms-win-core-path-blender-0.3.1.zip" -OutFile dlls.zip
           Expand-Archive -Path dlls.zip -DestinationPath dll_patch
+          
+          # Sprawdź strukturę plików DLL
+          Write-Host "DLL patch structure:"
+          Get-ChildItem -Recurse dll_patch | Select-Object FullName
 
       - name: Prepare workspace and check files
         shell: pwsh
@@ -120,23 +124,7 @@ jobs:
             exit 1
           }
 
-      - name: Compile win32 (Alternative approach)
-        shell: pwsh
-        run: |
-          # Przejdź do właściwego katalogu jeśli trzeba
-          if (!(Test-Path "main.py") -and (Test-Path "ESET-KeyGen")) {
-            Set-Location "ESET-KeyGen"
-          }
-          
-          # Użyj Python 3.8 z actions/setup-python zamiast portable
-          pip install --upgrade pip
-          pip install pyinstaller -r requirements.txt
-          
-          # Kompiluj dla 32-bit (używamy standardowego Python z GitHub Actions)
-          python -m PyInstaller --onefile --collect-data selenium_stealth --add-data "..\dll_patch\api-ms-win-core-path-blender\x86\api-ms-win-core-path-l1-1-0.dll;." main.py
-          Move-Item -Path .\dist\main.exe -Destination "..\ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe"
-
-      - name: Compile win64
+      - name: Compile win64 (primary)
         shell: pwsh
         run: |
           # Przejdź do właściwego katalogu jeśli trzeba
@@ -146,15 +134,73 @@ jobs:
           
           pip install --upgrade pip
           pip install pyinstaller -r requirements.txt
-          pyinstaller --onefile --collect-data selenium_stealth --add-data "..\dll_patch\api-ms-win-core-path-blender\x64\api-ms-win-core-path-l1-1-0.dll;." main.py
           
-          # Sprawdź czy katalog dist istnieje
+          # Sprawdź ścieżkę do DLL - popraw ścieżkę względną
+          $dllPath = "..\dll_patch\api-ms-win-core-path-blender\x64\api-ms-win-core-path-l1-1-0.dll"
+          if (Test-Path $dllPath) {
+            Write-Host "Found DLL at: $dllPath"
+            # Używaj ; jako separator na Windows zgodnie z os.pathsep
+            pyinstaller --onefile --collect-data selenium_stealth --add-data "$dllPath;." main.py
+          } else {
+            Write-Host "DLL not found at: $dllPath"
+            Write-Host "Available DLL files:"
+            Get-ChildItem -Recurse -Name "*.dll" ..\dll_patch | Select-Object -First 10
+            # Kompiluj bez DLL jeśli nie znajdzie
+            pyinstaller --onefile --collect-data selenium_stealth main.py
+          }
+          
+          # Sprawdź czy kompilacja się udała
           if (Test-Path ".\dist\main.exe") {
             Move-Item -Path .\dist\main.exe -Destination "..\ESET-KeyGen_v${{ github.event.inputs.version }}_win64.exe"
+            Write-Host "Successfully compiled win64 version"
           } else {
             Write-Error "Compilation failed - main.exe not found in dist folder"
-            Get-ChildItem -Recurse -Name "*.exe" | Select-Object -First 10
+            Get-ChildItem -Recurse .\dist | Select-Object FullName
             exit 1
+          }
+
+      - name: Compile win32 (simplified approach)
+        shell: pwsh
+        run: |
+          # Przejdź do właściwego katalogu jeśli trzeba
+          if (!(Test-Path "main.py") -and (Test-Path "ESET-KeyGen")) {
+            Set-Location "ESET-KeyGen"
+          }
+          
+          # Wyczyść poprzedni build
+          if (Test-Path "build") { Remove-Item -Recurse -Force build }
+          if (Test-Path "dist") { Remove-Item -Recurse -Force dist }
+          if (Test-Path "main.spec") { Remove-Item -Force main.spec }
+          
+          # Sprawdź ścieżkę do DLL dla x86
+          $dllPath32 = "..\dll_patch\api-ms-win-core-path-blender\x86\api-ms-win-core-path-l1-1-0.dll"
+          if (Test-Path $dllPath32) {
+            Write-Host "Found 32-bit DLL at: $dllPath32"
+            # Kompiluj z DLL
+            pyinstaller --onefile --collect-data selenium_stealth --add-data "$dllPath32;." main.py
+          } else {
+            Write-Host "32-bit DLL not found, compiling without it"
+            pyinstaller --onefile --collect-data selenium_stealth main.py
+          }
+          
+          # Sprawdź czy kompilacja się udała
+          if (Test-Path ".\dist\main.exe") {
+            Move-Item -Path .\dist\main.exe -Destination "..\ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe"
+            Write-Host "Successfully compiled win32 version"
+          } else {
+            Write-Error "Win32 compilation failed - main.exe not found in dist folder"
+            exit 1
+          }
+
+      - name: Verify compiled files
+        shell: pwsh
+        run: |
+          Write-Host "Checking compiled files:"
+          Get-ChildItem -Name "ESET-KeyGen_v${{ github.event.inputs.version }}_*.exe"
+          
+          # Sprawdź rozmiary plików
+          Get-ChildItem "ESET-KeyGen_v${{ github.event.inputs.version }}_*.exe" | ForEach-Object {
+            Write-Host "$($_.Name): $([math]::Round($_.Length/1MB, 2)) MB"
           }
 
       - name: Upload Windows artifacts
