@@ -21,6 +21,19 @@ jobs:
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v5
+        with:
+          repository: SET19724/ESET-KeyGen-test
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Debug Directory Structure
+        shell: bash
+        run: |
+          echo "Current directory:"
+          pwd
+          echo "Directory contents:"
+          ls -la
+          echo "Looking for Python files:"
+          find . -name "*.py" -o -name "requirements.txt" | head -10
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,7 +41,21 @@ jobs:
           python-version: '3.11'
         
       - name: Compile
+        shell: bash
         run: |
+          # Sprawdź czy jesteśmy w głównym katalogu repozytorium
+          if [[ ! -f "main.py" ]] && [[ -d "ESET-KeyGen" ]]; then
+            cd ESET-KeyGen
+            echo "Moved to ESET-KeyGen directory"
+          fi
+          
+          # Sprawdź czy main.py istnieje
+          if [[ ! -f "main.py" ]]; then
+            echo "Error: main.py not found in current directory: $(pwd)"
+            find .. -name "main.py" | head -5
+            exit 1
+          fi
+          
           python -m pip install --upgrade pip
           python -m pip install charset_normalizer pyinstaller -r requirements.txt
           pyinstaller --onefile --clean --target-arch universal2 main.py
@@ -46,29 +73,89 @@ jobs:
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v5
+        with:
+          repository: SET19724/ESET-KeyGen-test
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Debug Directory Structure
+        shell: pwsh
+        run: |
+          Write-Host "Current directory: $(pwd)"
+          Write-Host "Directory contents:"
+          Get-ChildItem -Force
+          Write-Host "Looking for Python files:"
+          Get-ChildItem -Recurse -Name "main.py", "requirements.txt" | Select-Object -First 10
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Download DLL patch
+        shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://github.com/nalexandru/api-ms-win-core-path-HACK/releases/download/0.3.1/api-ms-win-core-path-blender-0.3.1.zip" -OutFile dlls.zip
           Expand-Archive -Path dlls.zip -DestinationPath dll_patch
 
-      - name: Compile win32
+      - name: Prepare workspace and check files
+        shell: pwsh
         run: |
-          mkdir legacy
-          cd legacy
-          Invoke-WebRequest -Uri "https://github.com/rzc0d3r/ESET-KeyGen/releases/download/python380-portable-win32/python-v3.8.0-portable_win32.zip" -OutFile "python-portable.zip"
-          Expand-Archive -Path "python-portable.zip" -DestinationPath .
-          .\python.exe -m pip install --upgrade pip --no-warn-script-location
-          .\python.exe -m pip install pyinstaller -r ../requirements.txt --no-warn-script-location
-          Scripts\pyinstaller.exe --onefile --collect-data selenium_stealth --add-data ..\dll_patch\api-ms-win-core-path-blender\x86\api-ms-win-core-path-l1-1-0.dll:. ../main.py
-          Move-Item -Path .\dist\main.exe -Destination "../ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe"
+          # Sprawdź strukturę i przejdź do właściwego katalogu
+          if (!(Test-Path "main.py") -and (Test-Path "ESET-KeyGen")) {
+            Set-Location "ESET-KeyGen"
+            Write-Host "Moved to ESET-KeyGen directory"
+          }
+          
+          # Sprawdź czy main.py istnieje
+          if (!(Test-Path "main.py")) {
+            Write-Error "main.py not found in current directory: $(pwd)"
+            Get-ChildItem -Recurse -Name "main.py" | Select-Object -First 5
+            exit 1
+          }
+          
+          # Sprawdź czy requirements.txt istnieje
+          if (!(Test-Path "requirements.txt")) {
+            Write-Error "requirements.txt not found in current directory: $(pwd)"
+            Get-ChildItem -Recurse -Name "requirements.txt" | Select-Object -First 5
+            exit 1
+          }
 
-      - name: Compile win64
+      - name: Compile win32 (Alternative approach)
+        shell: pwsh
         run: |
+          # Przejdź do właściwego katalogu jeśli trzeba
+          if (!(Test-Path "main.py") -and (Test-Path "ESET-KeyGen")) {
+            Set-Location "ESET-KeyGen"
+          }
+          
+          # Użyj Python 3.8 z actions/setup-python zamiast portable
           pip install --upgrade pip
           pip install pyinstaller -r requirements.txt
-          pyinstaller --onefile --collect-data selenium_stealth --add-data dll_patch\api-ms-win-core-path-blender\x64\api-ms-win-core-path-l1-1-0.dll:. main.py
-          Move-Item -Path .\dist\main.exe -Destination "ESET-KeyGen_v${{ github.event.inputs.version }}_win64.exe"
+          
+          # Kompiluj dla 32-bit (używamy standardowego Python z GitHub Actions)
+          python -m PyInstaller --onefile --collect-data selenium_stealth --add-data "..\dll_patch\api-ms-win-core-path-blender\x86\api-ms-win-core-path-l1-1-0.dll;." main.py
+          Move-Item -Path .\dist\main.exe -Destination "..\ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe"
+
+      - name: Compile win64
+        shell: pwsh
+        run: |
+          # Przejdź do właściwego katalogu jeśli trzeba
+          if (!(Test-Path "main.py") -and (Test-Path "ESET-KeyGen")) {
+            Set-Location "ESET-KeyGen"
+          }
+          
+          pip install --upgrade pip
+          pip install pyinstaller -r requirements.txt
+          pyinstaller --onefile --collect-data selenium_stealth --add-data "..\dll_patch\api-ms-win-core-path-blender\x64\api-ms-win-core-path-l1-1-0.dll;." main.py
+          
+          # Sprawdź czy katalog dist istnieje
+          if (Test-Path ".\dist\main.exe") {
+            Move-Item -Path .\dist\main.exe -Destination "..\ESET-KeyGen_v${{ github.event.inputs.version }}_win64.exe"
+          } else {
+            Write-Error "Compilation failed - main.exe not found in dist folder"
+            Get-ChildItem -Recurse -Name "*.exe" | Select-Object -First 10
+            exit 1
+          }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -83,12 +170,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v4
         with:
           name: macos-artifact
 
       - name: Download Windows artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v4
         with:
           name: windows-artifacts
 
