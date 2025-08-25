@@ -1,8 +1,8 @@
 name: Account and Key Generator
 
 on:
- # schedule: #if need schedule 
- #   - cron: "0 */2 * * *"
+  # schedule: #if need schedule 
+  #   - cron: "0 */2 * * *"
   workflow_dispatch:
     inputs:
       account:
@@ -57,7 +57,7 @@ on:
 
 jobs:
   generate-account-and-key:
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.os || 'windows-latest' }} #if fallback then
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.os || 'windows-latest' }}
     steps:
       - name: Set Variables
         id: vars
@@ -69,7 +69,7 @@ jobs:
             echo "mail=${{ github.event.inputs.mail }}" >> $GITHUB_OUTPUT
             echo "key_type=${{ github.event.inputs.key_type }}" >> $GITHUB_OUTPUT
             echo "branch=${{ github.event.inputs.branch }}" >> $GITHUB_OUTPUT
-          else #if fallback then
+          else
             echo "account=0" >> $GITHUB_OUTPUT
             echo "key=1" >> $GITHUB_OUTPUT
             echo "mail=emailfake" >> $GITHUB_OUTPUT
@@ -79,15 +79,34 @@ jobs:
 
       - name: Checkout Repository
         uses: actions/checkout@v5
+        with:
+          repository: SET19724/ESET-KeyGen-test
+          ref: ${{ steps.vars.outputs.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Clone Repository
-        run: git clone -b "${{ steps.vars.outputs.branch }}" https://github.com/SET19724/ESET-KeyGen-test
+      # USUNIĘTY niepotrzebny krok klonowania
+      # - name: Clone Repository
+      #   run: git clone -b "${{ steps.vars.outputs.branch }}" https://github.com/SET19724/ESET-KeyGen-test
+
+      - name: Debug Directory Structure
+        shell: bash
+        run: |
+          echo "Current directory:"
+          pwd
+          echo "Directory contents:"
+          ls -la
+          echo "Looking for Python files:"
+          find . -name "*.py" -o -name "requirements.txt" | head -10
 
       - name: Setup & Run Script (Linux/macOS)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          cd ESET-KeyGen
+          # Sprawdź czy jesteśmy w głównym katalogu repozytorium
+          if [[ ! -f "main.py" ]] && [[ -d "ESET-KeyGen" ]]; then
+            cd ESET-KeyGen
+          fi
+          
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             brew install python@3.11 || true
           else
@@ -120,7 +139,24 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cd ESET-KeyGen
+          # Sprawdź strukturę i przejdź do właściwego katalogu
+          Write-Host "Current directory: $(pwd)"
+          Write-Host "Directory contents:"
+          Get-ChildItem -Force
+          
+          # Sprawdź czy main.py istnieje w bieżącym katalogu
+          if (!(Test-Path "main.py") -and (Test-Path "ESET-KeyGen")) {
+            Set-Location "ESET-KeyGen"
+            Write-Host "Moved to ESET-KeyGen directory"
+          }
+          
+          # Sprawdź czy main.py istnieje
+          if (!(Test-Path "main.py")) {
+            Write-Error "main.py not found in current directory: $(pwd)"
+            Get-ChildItem -Recurse -Name "main.py" | Select-Object -First 5
+            exit 1
+          }
+          
           python -m venv venv
           .\venv\Scripts\pip install -r requirements.txt
           .\venv\Scripts\Activate.ps1
@@ -130,14 +166,14 @@ jobs:
           $MAIL = "${{ steps.vars.outputs.mail }}"
           $KEY_TYPE = "${{ steps.vars.outputs.key_type }}"
 
-          if ($ACCOUNT -ne 0) {
+          if ($ACCOUNT -ne "0") {
             python main.py --auto-detect-browser --account --email-api "$MAIL" --skip-update-check --no-logo --disable-progress-bar --disable-logging --repeat $ACCOUNT
-            echo "Account:" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "Account:" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
             Get-Content -Path ./*ACCOUNTS.txt -ErrorAction SilentlyContinue | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           }
 
-          if ($KEY -ne 0) {
+          if ($KEY -ne "0") {
             python main.py --auto-detect-browser "$KEY_TYPE" --email-api "$MAIL" --skip-update-check --no-logo --disable-progress-bar --disable-logging --repeat $KEY
-            echo "`nKey:" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "`nKey:" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
             Get-Content -Path ./*KEYS.txt -ErrorAction SilentlyContinue | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           }
