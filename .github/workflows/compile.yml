@@ -16,8 +16,6 @@ on:
 jobs:
   macOS:
     runs-on: macos-latest
-    outputs:
-      artifact_mac: ${{ steps.upload.outputs.artifact_mac }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v5
@@ -58,7 +56,7 @@ jobs:
           
           python -m pip install --upgrade pip
           python -m pip install charset_normalizer pyinstaller -r requirements.txt
-          pyinstaller --onefile --clean --target-arch universal2 main.py
+          pyinstaller --onefile --clean main.py
           chmod a+x ./dist/main
           mv ./dist/main "./ESET-KeyGen_v${{ github.event.inputs.version }}_macos"
 
@@ -91,16 +89,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download DLL patch
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/nalexandru/api-ms-win-core-path-HACK/releases/download/0.3.1/api-ms-win-core-path-blender-0.3.1.zip" -OutFile dlls.zip
-          Expand-Archive -Path dlls.zip -DestinationPath dll_patch
-          
-          # Sprawdź strukturę plików DLL
-          Write-Host "DLL patch structure:"
-          Get-ChildItem -Recurse dll_patch | Select-Object FullName
-
       - name: Prepare workspace and check files
         shell: pwsh
         run: |
@@ -124,7 +112,7 @@ jobs:
             exit 1
           }
 
-      - name: Compile win64 (primary)
+      - name: Install dependencies
         shell: pwsh
         run: |
           # Przejdź do właściwego katalogu jeśli trzeba
@@ -134,32 +122,8 @@ jobs:
           
           pip install --upgrade pip
           pip install pyinstaller -r requirements.txt
-          
-          # Sprawdź ścieżkę do DLL - popraw ścieżkę względną
-          $dllPath = "..\dll_patch\api-ms-win-core-path-blender\x64\api-ms-win-core-path-l1-1-0.dll"
-          if (Test-Path $dllPath) {
-            Write-Host "Found DLL at: $dllPath"
-            # Używaj ; jako separator na Windows zgodnie z os.pathsep
-            pyinstaller --onefile --collect-data selenium_stealth --add-data "$dllPath;." main.py
-          } else {
-            Write-Host "DLL not found at: $dllPath"
-            Write-Host "Available DLL files:"
-            Get-ChildItem -Recurse -Name "*.dll" ..\dll_patch | Select-Object -First 10
-            # Kompiluj bez DLL jeśli nie znajdzie
-            pyinstaller --onefile --collect-data selenium_stealth main.py
-          }
-          
-          # Sprawdź czy kompilacja się udała
-          if (Test-Path ".\dist\main.exe") {
-            Move-Item -Path .\dist\main.exe -Destination "..\ESET-KeyGen_v${{ github.event.inputs.version }}_win64.exe"
-            Write-Host "Successfully compiled win64 version"
-          } else {
-            Write-Error "Compilation failed - main.exe not found in dist folder"
-            Get-ChildItem -Recurse .\dist | Select-Object FullName
-            exit 1
-          }
 
-      - name: Compile win32 (simplified approach)
+      - name: Compile Windows executable (simplified)
         shell: pwsh
         run: |
           # Przejdź do właściwego katalogu jeśli trzeba
@@ -167,63 +131,87 @@ jobs:
             Set-Location "ESET-KeyGen"
           }
           
-          # Wyczyść poprzedni build
-          if (Test-Path "build") { Remove-Item -Recurse -Force build }
-          if (Test-Path "dist") { Remove-Item -Recurse -Force dist }
-          if (Test-Path "main.spec") { Remove-Item -Force main.spec }
-          
-          # Sprawdź ścieżkę do DLL dla x86
-          $dllPath32 = "..\dll_patch\api-ms-win-core-path-blender\x86\api-ms-win-core-path-l1-1-0.dll"
-          if (Test-Path $dllPath32) {
-            Write-Host "Found 32-bit DLL at: $dllPath32"
-            # Kompiluj z DLL
-            pyinstaller --onefile --collect-data selenium_stealth --add-data "$dllPath32;." main.py
-          } else {
-            Write-Host "32-bit DLL not found, compiling without it"
-            pyinstaller --onefile --collect-data selenium_stealth main.py
+          # Użyj prostszej konfiguracji PyInstaller bez problematycznych opcji
+          try {
+            Write-Host "Starting PyInstaller compilation..."
+            pyinstaller --onefile --clean main.py
+            
+            # Sprawdź czy kompilacja się udała
+            if (Test-Path ".\dist\main.exe") {
+              # Utwórz dwie kopie - jedna jako win64, druga jako win32
+              Copy-Item -Path .\dist\main.exe -Destination "..\ESET-KeyGen_v${{ github.event.inputs.version }}_win64.exe"
+              Copy-Item -Path .\dist\main.exe -Destination "..\ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe"
+              Write-Host "Successfully compiled Windows version"
+              Write-Host "File size: $([math]::Round((Get-Item .\dist\main.exe).Length/1MB, 2)) MB"
+            } else {
+              Write-Error "Compilation failed - main.exe not found in dist folder"
+              Write-Host "Contents of dist folder:"
+              if (Test-Path ".\dist") {
+                Get-ChildItem -Recurse .\dist
+              } else {
+                Write-Host "Dist folder does not exist"
+              }
+              exit 1
+            }
           }
-          
-          # Sprawdź czy kompilacja się udała
-          if (Test-Path ".\dist\main.exe") {
-            Move-Item -Path .\dist\main.exe -Destination "..\ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe"
-            Write-Host "Successfully compiled win32 version"
-          } else {
-            Write-Error "Win32 compilation failed - main.exe not found in dist folder"
+          catch {
+            Write-Error "PyInstaller compilation failed: $($_.Exception.Message)"
+            Write-Host "Full error details:"
+            Write-Host $_.Exception
             exit 1
           }
 
-      - name: Verify compiled files
+      - name: Verify compiled files exist
         shell: pwsh
         run: |
           Write-Host "Checking compiled files:"
-          Get-ChildItem -Name "ESET-KeyGen_v${{ github.event.inputs.version }}_*.exe"
-          
-          # Sprawdź rozmiary plików
-          Get-ChildItem "ESET-KeyGen_v${{ github.event.inputs.version }}_*.exe" | ForEach-Object {
-            Write-Host "$($_.Name): $([math]::Round($_.Length/1MB, 2)) MB"
+          $files = Get-ChildItem -Name "ESET-KeyGen_v${{ github.event.inputs.version }}_*.exe" -ErrorAction SilentlyContinue
+          if ($files) {
+            foreach ($file in $files) {
+              $size = [math]::Round((Get-Item $file).Length/1MB, 2)
+              Write-Host "$file : $size MB"
+            }
+          } else {
+            Write-Error "No compiled files found!"
+            Write-Host "All files in current directory:"
+            Get-ChildItem
+            exit 1
           }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
+        if: always()  # Upload even if previous steps had warnings
         with:
           name: windows-artifacts
           path: |
             ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe
             ESET-KeyGen_v${{ github.event.inputs.version }}_win64.exe
+          if-no-files-found: error  # Fail if no files found
 
   release:
     needs: [macOS, windows]
     runs-on: ubuntu-latest
+    if: always() && (needs.macOS.result == 'success' || needs.windows.result == 'success')
     steps:
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
+        if: needs.macOS.result == 'success'
         with:
           name: macos-artifact
+        continue-on-error: true
 
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
+        if: needs.windows.result == 'success'
         with:
           name: windows-artifacts
+        continue-on-error: true
+
+      - name: List available files
+        run: |
+          echo "Available files for release:"
+          ls -la
+          find . -name "ESET-KeyGen_v*" -type f
 
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2
@@ -233,8 +221,6 @@ jobs:
           draft: false
           generate_release_notes: true
           files: |
-            ESET-KeyGen_v${{ github.event.inputs.version }}_macos
-            ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe
-            ESET-KeyGen_v${{ github.event.inputs.version }}_win64.exe
+            ESET-KeyGen_v${{ github.event.inputs.version }}_*
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }}
