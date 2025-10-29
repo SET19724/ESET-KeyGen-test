@@ -35,8 +35,8 @@ jobs:
           pip install pyinstaller charset_normalizer -r requirements.txt
           pyinstaller --onefile --clean main.py
           chmod +x ./dist/main
-          mkdir -p ../release
-          mv ./dist/main "../release/ESET-KeyGen_v${{ github.event.inputs.version }}_macos"
+          mkdir -p release
+          mv ./dist/main "release/ESET-KeyGen_v${{ github.event.inputs.version }}_macos"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -59,19 +59,19 @@ jobs:
         shell: pwsh
         run: |
           if (!(Test-Path "main.py") -and (Test-Path "ESET-KeyGen")) {
-            cd ESET-KeyGen
+            Set-Location "ESET-KeyGen"
           }
           pip install --upgrade pip
           pip install pyinstaller -r requirements.txt
           pyinstaller --onefile --clean main.py
-          New-Item -Type Directory -Force -Path "..\release" | Out-Null
-          Copy-Item ".\dist\main.exe" "..\release\ESET-KeyGen_v${{ github.event.inputs.version }}_win64.exe"
-          Copy-Item ".\dist\main.exe" "..\release\ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe"
+          New-Item -Type Directory -Force -Path ".\release" | Out-Null
+          Copy-Item ".\dist\main.exe" ".\release\ESET-KeyGen_v${{ github.event.inputs.version }}_win64.exe"
+          Copy-Item ".\dist\main.exe" ".\release\ESET-KeyGen_v${{ github.event.inputs.version }}_win32.exe"
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
-          path: ../release/ESET-KeyGen_v${{ github.event.inputs.version }}_*.exe
+          path: release/ESET-KeyGen_v${{ github.event.inputs.version }}_*.exe
 
   release:
     needs: [macOS, windows]
